@@ -1,74 +1,183 @@
-from __future__ import annotations
-
 from pathlib import Path
-
 import pandas as pd
 
+
+# Find the root folder of the project
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data"
+
+# Default location of the primary dataset
+DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "retail_sales_ontario_synthetic.csv"
 
 
-def load_sales_data(path: str | Path | None = None) -> pd.DataFrame:
-    """Load the synthetic Ontario sales dataset."""
-    sales_path = Path(path) if path else DATA_DIR / "retail_sales_ontario_synthetic.csv"
-    df = pd.read_csv(sales_path)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["units_sold"] = pd.to_numeric(df["units_sold"], errors="coerce")
-    df["unit_price"] = pd.to_numeric(df["unit_price"], errors="coerce")
-    df["total_sales"] = df["units_sold"] * df["unit_price"]
-    return df
+class LoadSales:
+    """
+    Load and clean the e-commerce sales dataset.
+    """
 
+    def __init__(self, file_path=DEFAULT_DATA_PATH):
+        self.file_path = Path(file_path)
 
-def load_city_metadata(path: str | Path | None = None) -> pd.DataFrame:
-    """Load city metadata for geographic enrichment."""
-    metadata_path = Path(path) if path else DATA_DIR / "city_metadata.csv"
-    df = pd.read_csv(metadata_path)
-    return df
+        # Load the raw CSV file
+        self.data = pd.read_csv(
+            self.file_path,
+            low_memory=False
+        )
 
+        self.cleaned = False
 
-def merge_sales_and_city_metadata(
-    sales_df: pd.DataFrame | None = None,
-    metadata_df: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Merge sales data with city metadata on the city name."""
-    if sales_df is None:
-        sales_df = load_sales_data()
-    if metadata_df is None:
-        metadata_df = load_city_metadata()
+    def getSales(self):
+        """
+        Return a copy of the loaded sales data.
+        """
+        return self.data.copy()
 
-    merged = sales_df.merge(metadata_df, on="city", how="left")
-    return merged
+    def clean(self):
+        """
+        Clean and standardize the sales data.
+        """
 
+        df = self.data.copy()
 
-def preprocess_sales_data(
-    sales_df: pd.DataFrame | None = None,
-    metadata_df: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Clean the combined dataset for analysis."""
-    df = merge_sales_and_city_metadata(sales_df=sales_df, metadata_df=metadata_df)
+        # -------------------------------------------------
+        # 1. Clean text columns
+        # -------------------------------------------------
+        text_columns = [
+            "customer_id",
+            "product",
+            "product_category",
+            "coupon_code",
+            "payment_method",
+            "shipping_city",
+            "shipping_province"
+        ]
 
-    df = df.drop_duplicates().sort_values("date").reset_index(drop=True)
-    df["month"] = df["date"].dt.to_period("M").astype(str)
-    df["store_type"] = df["store_type"].fillna("Unknown")
-    df["category"] = df["category"].fillna("Uncategorized")
-    df["population_2023"] = pd.to_numeric(df["population_2023"], errors="coerce")
-    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
-    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
+        for column in text_columns:
+            if column in df.columns:
+                df[column] = (
+                    df[column]
+                    .astype("string")
+                    .str.strip()
+                )
 
-    return df
+        # Standardize coupon codes
+        if "coupon_code" in df.columns:
+            df["coupon_code"] = (
+                df["coupon_code"]
+                .str.upper()
+                .fillna("NO_COUPON")
+            )
 
+        # -------------------------------------------------
+        # 2. Convert date column
+        # -------------------------------------------------
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(
+                df["date"],
+                errors="coerce"
+            )
 
-def main() -> None:
-    sales_df = load_sales_data()
-    city_df = load_city_metadata()
-    processed_df = preprocess_sales_data(sales_df=sales_df, metadata_df=city_df)
+        # -------------------------------------------------
+        # 3. Convert numeric columns
+        # -------------------------------------------------
+        numeric_columns = [
+            "price",
+            "quantity",
+            "discount_pct",
+            "sales_amount"
+        ]
 
-    print("Sales rows loaded:", len(sales_df))
-    print("City metadata rows loaded:", len(city_df))
-    print("Merged dataset rows:", len(processed_df))
-    print("\nPreview:")
-    print(processed_df.head(5).to_string(index=False))
+        for column in numeric_columns:
+            if column in df.columns:
+                df[column] = pd.to_numeric(
+                    df[column],
+                    errors="coerce"
+                )
 
+        # -------------------------------------------------
+        # 4. Remove rows missing required information
+        # -------------------------------------------------
+        required_columns = [
+            "date",
+            "customer_id",
+            "product",
+            "price",
+            "quantity",
+            "shipping_city"
+        ]
 
-if __name__ == "__main__":
-    main()
+        required_columns = [
+            column
+            for column in required_columns
+            if column in df.columns
+        ]
+
+        df = df.dropna(subset=required_columns)
+
+        # -------------------------------------------------
+        # 5. Remove invalid prices
+        # -------------------------------------------------
+        if "price" in df.columns:
+            df = df[df["price"] > 0]
+
+        # -------------------------------------------------
+        # 6. Remove invalid quantities
+        # -------------------------------------------------
+        if "quantity" in df.columns:
+            df = df[df["quantity"] > 0]
+
+        # -------------------------------------------------
+        # 7. Fix discount percentages
+        # -------------------------------------------------
+        if "discount_pct" in df.columns:
+            df["discount_pct"] = (
+                df["discount_pct"]
+                .fillna(0)
+                .clip(lower=0, upper=100)
+            )
+
+        # -------------------------------------------------
+        # 8. Remove exact duplicate rows
+        # -------------------------------------------------
+        df = df.drop_duplicates()
+
+        # -------------------------------------------------
+        # 9. Fill missing sales amount when possible
+        # -------------------------------------------------
+        if "sales_amount" in df.columns:
+
+            discount = (
+                df["discount_pct"]
+                if "discount_pct" in df.columns
+                else pd.Series(0, index=df.index)
+            )
+
+            calculated_sales = (
+                df["price"]
+                * df["quantity"]
+                * (1 - discount / 100)
+            )
+
+            df["sales_amount"] = (
+                df["sales_amount"]
+                .fillna(calculated_sales)
+            )
+
+        self.data = df.reset_index(drop=True)
+        self.cleaned = True
+
+        return self.data.copy()
+
+    def total(self):
+        """
+        Return total sales amount.
+        """
+
+        if "sales_amount" in self.data.columns:
+            return float(self.data["sales_amount"].sum())
+
+        return float(
+            (
+                self.data["price"]
+                * self.data["quantity"]
+            ).sum()
+        )
