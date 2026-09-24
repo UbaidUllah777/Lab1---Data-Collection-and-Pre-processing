@@ -1,0 +1,11 @@
+field,type,description,source,source_url
+id,integer,Unique product identifier.,DummyJSON Products API,https://dummyjson.com/docs/products
+title,string,Product name or title.,DummyJSON Products API,https://dummyjson.com/docs/products
+category,string,Product category.,DummyJSON Products API,https://dummyjson.com/docs/products
+price,float,Product price.,DummyJSON Products API,https://dummyjson.com/docs/products
+discountPercentage,float,Discount percentage associated with the product.,DummyJSON Products API,https://dummyjson.com/docs/products
+rating,float,Product rating value.,DummyJSON Products API,https://dummyjson.com/docs/products
+stock,integer,Available stock quantity shown for the product.,DummyJSON Products API,https://dummyjson.com/docs/products
+brand,string,Product brand.,DummyJSON Products API,https://dummyjson.com/docs/products
+sku,string,Stock keeping unit identifier.,DummyJSON Products API,https://dummyjson.com/docs/products
+weight,float,Product weight value.,DummyJSON Products API,https://dummyjson.com/docs/products
